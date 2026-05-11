@@ -7,7 +7,7 @@ Subscribes to:
   /ukf_pose               (your UKF estimate -- see TODO blocks below)
 
 OPTIONAL blocks (commented out, uncomment as the lab progresses):
-  /noisy_odom             (section 2.6 -- the noisy-odom experiment)
+  /noisy_odom             (The noisy-odom experiment)
   /ekf_pose               (BONUS -- run your Lab 2 EKF alongside UKF)
 
 On Ctrl+C, saves a CSV and a plot of all subscribed sources.
@@ -43,7 +43,7 @@ class Recorder(Node):
         self.ukf_data   = []
 
         # ====================================================================
-        # TODO (Section 2.6 -- noisy odom experiment): uncomment to also store
+        # TODO (The noisy odom experiment): uncomment to also store
         # noisy_odom samples.
         # ====================================================================
         # self.noisy_odom_data = []
@@ -78,7 +78,7 @@ class Recorder(Node):
             self.ukf_callback, 10)
 
         # ====================================================================
-        # TODO (Section 2.6): uncomment to also subscribe to /noisy_odom.
+        # TODO: uncomment to also subscribe to /noisy_odom.
         # ====================================================================
         # self.create_subscription(
         #     Odometry, '/noisy_odom',
@@ -113,7 +113,7 @@ class Recorder(Node):
         self.ukf_data.append((t, x, y))
 
     # ========================================================================
-    # TODO (Section 2.6): uncomment the noisy_odom callback below.
+    # TODO: uncomment the noisy_odom callback below.
     # ========================================================================
     # def noisy_odom_callback(self, msg):
     #     t = time.time() - self.t0
@@ -147,7 +147,7 @@ class Recorder(Node):
                 writer.writerow(['ukf',   f'{t:.3f}', f'{x:.4f}', f'{y:.4f}'])
 
             # ================================================================
-            # TODO (Section 2.6): uncomment to also save noisy_odom samples.
+            # TODO: uncomment to also save noisy_odom samples.
             # ================================================================
             # for (t, x, y) in self.noisy_odom_data:
             #     writer.writerow(['noisy_odom', f'{t:.3f}', f'{x:.4f}', f'{y:.4f}'])
@@ -164,7 +164,7 @@ class Recorder(Node):
               f' ukf: {len(self.ukf_data)}')
 
         # ====================================================================
-        # TODO (Section 2.6): uncomment to also print noisy_odom count.
+        # TODO: uncomment to also print noisy_odom count.
         # ====================================================================
         # print(f'  noisy_odom: {len(self.noisy_odom_data)}')
 
@@ -195,7 +195,7 @@ class Recorder(Node):
                     label=f'UKF estimate ({len(self.ukf_data)} pts)')
 
         # ====================================================================
-        # TODO (Section 2.6): uncomment to also plot the noisy_odom trail.
+        # TODO: uncomment to also plot the noisy_odom trail.
         # ====================================================================
         # if self.noisy_odom_data:
         #     xs = [d[1] for d in self.noisy_odom_data]
