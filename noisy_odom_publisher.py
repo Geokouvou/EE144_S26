@@ -12,7 +12,7 @@ Tunables at the top of the file:
 USAGE
 -----
 Run alongside Gazebo. Then your UKF node should subscribe to /noisy_odom
-instead of /odom (see the manual section 2.6).
+instead of /odom.
 
     python3 noisy_odom_publisher.py
 """
