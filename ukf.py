@@ -1,30 +1,22 @@
 """
 ukf.py — UKF localization node for the Turtlebot4 in the beacons world.
 
+*** STUDENT VERSION ***
+
+Fill in the five TODOs inside the `UKFLocalization` class. Everything else
+(ROS node, LIDAR clustering, motion/measurement models, helpers, landmark
+map) is provided.
+
+State:        mu = [x, y, theta],  Sigma is 3x3
+Control:      u  = [v, omega]
+Measurement:  z  = [range, bearing]
+
 Subscribes:
     /odom   (nav_msgs/Odometry) -- wheel odometry, drives PREDICT
     /scan   (sensor_msgs/LaserScan) -- LIDAR, drives UPDATE
 
 Publishes:
     /ukf_pose (nav_msgs/Odometry) -- the UKF's pose estimate
-
-WHAT YOU NEED TO DO
--------------------
-There are two methods you must complete:
-
-    UKFLocalization.predict(self, v, omega, dt)
-    UKFLocalization.update(self, z, landmark_xy)
-
-Each has TODOs and references to the equation numbers from the lab manual.
-DO NOT modify the rest of this file -- the ROS plumbing, the LIDAR clustering,
-the landmark map, sigma point generation, and the publisher are all already
-set up for you.
-
-USAGE
------
-Once you fill in the methods, run (in a separate terminal from Gazebo):
-
-    python3 ukf.py
 """
 
 import math
@@ -50,20 +42,23 @@ LANDMARKS = np.array([
 
 # ============================================================================
 #                       NOISE PARAMETERS
-# Tune these if the filter behaves badly:
-#   - Increase SIGMA_V / SIGMA_W if filter is too confident in odometry
-#   - Increase SIGMA_RANGE / SIGMA_BEARING if it's too jumpy on measurements
 # ============================================================================
-SIGMA_V       = 0.05
-SIGMA_W       = 0.05
-SIGMA_RANGE   = 0.10
-SIGMA_BEARING = 0.05
+SIGMA_V       = 0.05    # m/s   -- linear velocity noise
+SIGMA_W       = 0.05    # rad/s -- angular velocity noise
+SIGMA_RANGE   = 0.80    # m     -- LIDAR range noise
+SIGMA_BEARING = 0.45    # rad   -- LIDAR bearing noise
 
-MAHALANOBIS_GATE = 9.21   # chi-squared 99% confidence, 2 DOF
+MAHALANOBIS_GATE = 4.0   # chi-squared 99% confidence, 2 DOF
 
-# ----------------------------------------------------------------------------
-# UKF tuning parameters -- the standard "scaled unscented transform" values
-# ----------------------------------------------------------------------------
+# The /scan frame is rotated +90 degrees relative to base_link.
+# tf2_echo showed yaw = +1.571 rad, so convert scan-frame bearings
+# into the robot/base frame before using them in the UKF measurement update.
+LIDAR_BEARING_OFFSET = math.pi / 2
+
+
+# ============================================================================
+#                       UKF PARAMETERS
+# ============================================================================
 N_STATE = 3
 ALPHA   = 1e-3
 BETA    = 2.0
@@ -72,7 +67,7 @@ LAMBDA  = ALPHA**2 * (N_STATE + KAPPA) - N_STATE
 
 
 # ============================================================================
-#                       HELPERS
+#                       HELPER FUNCTIONS  (provided)
 # ============================================================================
 def wrap_to_pi(angle):
     """Wrap an angle to the range [-pi, pi]."""
@@ -90,13 +85,11 @@ def quaternion_from_yaw(yaw):
     return (0.0, 0.0, math.sin(half), math.cos(half))
 
 
-# ============================================================================
-#                       MOTION AND MEASUREMENT MODELS
-# Same as in the EKF lab, but here we pass sigma points through them DIRECTLY
-# (no Jacobians needed). These are already implemented for you.
-# ============================================================================
 def motion_model(state, v, omega, dt):
-    """Push a single state vector through the motion model."""
+    """Push a single state vector through the unicycle motion model.
+
+    Handles the straight-line case (|omega| ~ 0) separately.
+    """
     x, y, theta = state[0], state[1], state[2]
     if abs(omega) < 1e-6:
         new_x = x + v * dt * math.cos(theta)
@@ -112,7 +105,10 @@ def motion_model(state, v, omega, dt):
 
 
 def measurement_model(state, landmark_xy):
-    """Push a single state through the measurement model."""
+    """Return z = [range, bearing] of `landmark_xy` as seen from `state`.
+
+    Bearing is in the robot's body frame and wrapped to [-pi, pi].
+    """
     x, y, theta = state[0], state[1], state[2]
     lx, ly = landmark_xy
     dx = lx - x
@@ -122,190 +118,126 @@ def measurement_model(state, landmark_xy):
 
 
 # ============================================================================
-#                       THE UKF CLASS
-# This is where YOU write the math. Two methods to complete: predict, update.
+#                       THE UKF CLASS  (you fill this in)
+# ============================================================================
+#
+# A note on angles before you start:
+#   The state contains a yaw (theta) and the measurement contains a bearing.
+#   Any time you take a *difference* of two angles -- e.g. (sigma_i - mu) or
+#   (z - z_hat) -- wrap the angular component to [-pi, pi] BEFORE using it
+#   in any other math. Otherwise a 0.01 rad error can show up as ~6.27 rad.
+#   The `wrap_to_pi` helper is provided.
 # ============================================================================
 class UKFLocalization:
     def __init__(self):
+        # State and covariance
         self.mu = np.array([0.0, 0.0, 0.0])
         self.Sigma = np.diag([0.01, 0.01, 0.01])
+
+        # Process noise Q (added to predicted covariance)
         self.Q = np.diag([SIGMA_V ** 2 * 0.1,
                           SIGMA_V ** 2 * 0.1,
                           SIGMA_W ** 2 * 0.1])
+
+        # Measurement noise R for z = [range, bearing]
         self.R = np.diag([SIGMA_RANGE ** 2, SIGMA_BEARING ** 2])
+
+        # Sigma-point weights (you compute these)
         self.weights_m, self.weights_c = self._compute_weights()
 
     # ------------------------------------------------------------------ #
-    #  WEIGHTS for combining sigma points -- already implemented          #
+    # TODO 1: Sigma-point weights.
+    #
+    # Return (Wm, Wc), each a 1D array of length (2n + 1) where n = N_STATE.
+    # Wm reconstructs the mean, Wc reconstructs the covariance.
+    #
+    #     Wm[0] = LAMBDA / (n + LAMBDA)
+    #     Wc[0] = LAMBDA / (n + LAMBDA) + (1 - ALPHA^2 + BETA)
+    #     Wm[i] = Wc[i] = 1 / (2 (n + LAMBDA))    for i = 1, ..., 2n
     # ------------------------------------------------------------------ #
     def _compute_weights(self):
-        n = N_STATE
-        Wm = np.zeros(2 * n + 1)
-        Wc = np.zeros(2 * n + 1)
-        Wm[0] = LAMBDA / (n + LAMBDA)
-        Wc[0] = LAMBDA / (n + LAMBDA) + (1 - ALPHA**2 + BETA)
-        for i in range(1, 2 * n + 1):
-            Wm[i] = 1.0 / (2 * (n + LAMBDA))
-            Wc[i] = 1.0 / (2 * (n + LAMBDA))
-        return Wm, Wc
+        raise NotImplementedError("TODO 1")
 
     # ------------------------------------------------------------------ #
-    #  SIGMA POINT GENERATION -- already implemented                      #
-    #  Creates 2n+1 sample points around (mu, Sigma) using a matrix       #
-    #  square root via Cholesky decomposition.                            #
+    # TODO 2: Sigma points.
+    #
+    # Return the 2n+1 sigma points around (mu, Sigma) as an array of shape
+    # (2n+1, n), where n = N_STATE.
+    #
+    #     X[0]     = mu
+    #     X[i+1]   = mu + L[:, i]      i = 0, ..., n-1
+    #     X[n+i+1] = mu - L[:, i]      i = 0, ..., n-1
+    #
+    # where L is the lower-triangular Cholesky factor of (n + LAMBDA) * Sigma.
+    #
+    # Gotchas:
+    #   * If Sigma drifts to not-quite-PD, Cholesky will raise
+    #     np.linalg.LinAlgError. The standard fix is to retry on
+    #     (Sigma + 1e-9 * I).
+    #   * Wrap each sigma point's yaw (index 2) to [-pi, pi] before returning.
     # ------------------------------------------------------------------ #
     def _generate_sigma_points(self, mu, Sigma):
-        n = N_STATE
-        sigma_points = np.zeros((2 * n + 1, n))
-        try:
-            L = np.linalg.cholesky((n + LAMBDA) * Sigma)
-        except np.linalg.LinAlgError:
-            L = np.linalg.cholesky((n + LAMBDA) * (Sigma + 1e-9 * np.eye(n)))
-
-        sigma_points[0] = mu
-        for i in range(n):
-            sigma_points[i + 1]     = mu + L[:, i]
-            sigma_points[n + i + 1] = mu - L[:, i]
-
-        for i in range(2 * n + 1):
-            sigma_points[i, 2] = wrap_to_pi(sigma_points[i, 2])
-        return sigma_points
+        raise NotImplementedError("TODO 2")
 
     # ------------------------------------------------------------------ #
-    #  PREDICT STEP                                                       #
+    # TODO 3: UKF predict step.
+    #
+    # Given control (v, omega) and timestep dt, update self.mu and self.Sigma
+    # by pushing sigma points through motion_model() and recombining:
+    #
+    #     mu_pred    = sum_i  Wm[i] * g(X_i, u, dt)
+    #     Sigma_pred = sum_i  Wc[i] * (g(X_i) - mu_pred)(g(X_i) - mu_pred)^T  +  Q
+    #
+    # Don't forget to wrap angles on every difference, and on the yaw of
+    # mu_pred itself.
     # ------------------------------------------------------------------ #
     def predict(self, v, omega, dt):
-        """
-        Run the UKF predict step.
-          v, omega : control inputs from odometry
-          dt       : time elapsed since last predict
-        Updates self.mu and self.Sigma in place.
-        """
-        n = N_STATE
-
-        # 1. Generate sigma points from current belief (already done for you)
-        sigma_points = self._generate_sigma_points(self.mu, self.Sigma)
-
-        # ----------------------------------------------------------------
-        # TODO 1: Push each sigma point through the motion model.
-        # Hint: call motion_model(sigma_points[i], v, omega, dt) for each i,
-        # store results in `propagated` (shape (2n+1, n)).
-        # ----------------------------------------------------------------
-        propagated = np.zeros_like(sigma_points)
-        # YOUR CODE HERE  (Eq. 2 of the manual)
-
-        # ----------------------------------------------------------------
-        # TODO 2: Recover the predicted mean as the weighted sum of
-        # propagated sigma points (Eq. 3a). Don't forget to wrap theta.
-        # ----------------------------------------------------------------
-        mu_pred = np.zeros(n)
-        # YOUR CODE HERE
-        mu_pred[2] = wrap_to_pi(mu_pred[2])
-
-        # ----------------------------------------------------------------
-        # TODO 3: Recover the predicted covariance (Eq. 3b).
-        # Sum weights_c[i] * (propagated[i] - mu_pred)(propagated[i] - mu_pred)^T
-        # then add the process noise Q.
-        # IMPORTANT: wrap the theta component of each difference using
-        # wrap_to_pi BEFORE taking the outer product.
-        # ----------------------------------------------------------------
-        Sigma_pred = np.zeros((n, n))
-        # YOUR CODE HERE
-
-        self.mu = mu_pred
-        self.Sigma = Sigma_pred
+        raise NotImplementedError("TODO 3")
 
     # ------------------------------------------------------------------ #
-    #  UPDATE STEP                                                        #
+    # TODO 4: UKF update step.
+    #
+    # Given measurement z = [range, bearing] of the landmark at landmark_xy,
+    # fuse it into self.mu and self.Sigma:
+    #
+    #     Z_i   = h(X_i, landmark_xy)
+    #     z_hat = sum_i  Wm[i] * Z_i
+    #     S     = sum_i  Wc[i] * (Z_i - z_hat)(Z_i - z_hat)^T  +  R
+    #     T     = sum_i  Wc[i] * (X_i - mu)(Z_i - z_hat)^T
+    #     K     = T S^{-1}
+    #     mu     <- mu + K (z - z_hat)
+    #     Sigma  <- Sigma - K S K^T
+    #
+    # Wrap bearings on every measurement difference, and wrap yaw on every
+    # state difference and on the final mu.
     # ------------------------------------------------------------------ #
     def update(self, z, landmark_xy):
-        """
-        Run the UKF update step for one observed landmark.
-          z           : np.array([range, bearing]) from LIDAR
-          landmark_xy : (lx, ly) world position of matched landmark
-        Updates self.mu and self.Sigma in place.
-        """
-        n = N_STATE
-
-        # 1. Generate sigma points from predicted belief (already done)
-        sigma_points = self._generate_sigma_points(self.mu, self.Sigma)
-
-        # ----------------------------------------------------------------
-        # TODO 4: Push each sigma point through the measurement model.
-        # Each result is a 2-vector [range, bearing].
-        # Store in Z_sigma (shape (2n+1, 2)).
-        # ----------------------------------------------------------------
-        Z_sigma = np.zeros((2 * n + 1, 2))
-        # YOUR CODE HERE  (Eq. 4)
-
-        # ----------------------------------------------------------------
-        # TODO 5: Recover predicted measurement mean (Eq. 5a).
-        # Weighted sum across sigma points. Wrap the bearing at the end.
-        # ----------------------------------------------------------------
-        z_hat = np.zeros(2)
-        # YOUR CODE HERE
-        z_hat[1] = wrap_to_pi(z_hat[1])
-
-        # ----------------------------------------------------------------
-        # TODO 6: Compute innovation covariance S (Eq. 5b).
-        # S = sum(W_c[i] * (Z_sigma[i] - z_hat)(Z_sigma[i] - z_hat)^T) + R
-        # Wrap the BEARING component of each difference before outer product.
-        # ----------------------------------------------------------------
-        S = np.zeros((2, 2))
-        # YOUR CODE HERE
-
-        # ----------------------------------------------------------------
-        # TODO 7: Compute cross-covariance T between state and measurement
-        # (Eq. 5c).
-        # T = sum(W_c[i] * (sigma_points[i] - mu)(Z_sigma[i] - z_hat)^T)
-        # Wrap the THETA component of state diff AND the BEARING component
-        # of measurement diff before outer products.
-        # ----------------------------------------------------------------
-        T = np.zeros((n, 2))
-        # YOUR CODE HERE
-
-        # ----------------------------------------------------------------
-        # TODO 8: Compute the Kalman gain K (Eq. 5d).
-        # ----------------------------------------------------------------
-        K = np.zeros((n, 2))
-        # YOUR CODE HERE  (K = T @ inv(S))
-
-        # ----------------------------------------------------------------
-        # TODO 9: Update self.mu (Eq. 5e). Wrap bearing in innovation
-        # BEFORE multiplying by K. Wrap mu[2] after.
-        # ----------------------------------------------------------------
-        innovation = z - z_hat
-        innovation[1] = wrap_to_pi(innovation[1])
-        # YOUR CODE HERE  (self.mu = ...)
-        self.mu[2] = wrap_to_pi(self.mu[2])
-
-        # ----------------------------------------------------------------
-        # TODO 10: Update self.Sigma (Eq. 5f).
-        # Sigma = Sigma - K @ S @ K^T
-        # ----------------------------------------------------------------
-        # YOUR CODE HERE
+        raise NotImplementedError("TODO 4")
 
     # ------------------------------------------------------------------ #
-    #  Mahalanobis distance for data association (already implemented)   #
+    # TODO 5: Squared Mahalanobis distance for data association.
+    #
+    # Return  (z - z_hat)^T S^{-1} (z - z_hat)  as a float, where z_hat and S
+    # are computed exactly as in `update` above. Do NOT modify self.mu or
+    # self.Sigma here -- this is a "what-if" query used to decide which
+    # landmark a detection belongs to.
+    #
+    # If S is singular (np.linalg.LinAlgError on inv), return float('inf').
     # ------------------------------------------------------------------ #
     def mahalanobis_distance_sq(self, z, landmark_xy):
-        z_hat = measurement_model(self.mu, landmark_xy)
-        innov = z - z_hat
-        innov[1] = wrap_to_pi(innov[1])
-        S_approx = self.R + np.array([
-            [self.Sigma[0,0] + self.Sigma[1,1], 0.0],
-            [0.0, self.Sigma[2,2]],
-        ])
-        try:
-            return float(innov @ np.linalg.inv(S_approx) @ innov)
-        except np.linalg.LinAlgError:
-            return float('inf')
+        raise NotImplementedError("TODO 5")
 
 
 # ============================================================================
-#                       LIDAR CLUSTERING (already implemented)
+#                       LIDAR CLUSTERING  (provided)
 # ============================================================================
 def cluster_scan(scan, max_gap=0.15, min_points=3, max_width=0.5):
+    """Group neighboring LIDAR points into beacon detections.
+
+    Returns a list of (range, bearing) tuples in the robot/base frame.
+    The +pi/2 offset accounts for the /scan frame being rotated 90deg
+    relative to base_link on the Turtlebot4.
+    """
     ranges = np.array(scan.ranges)
     n = len(ranges)
     if n == 0:
@@ -344,25 +276,26 @@ def cluster_scan(scan, max_gap=0.15, min_points=3, max_width=0.5):
         width = math.hypot(xs.max() - xs.min(), ys.max() - ys.min())
         if width > max_width:
             continue
-        detections.append((math.hypot(cx, cy), math.atan2(cy, cx)))
+        bearing = wrap_to_pi(math.atan2(cy, cx) + LIDAR_BEARING_OFFSET)
+        detections.append((math.hypot(cx, cy), bearing))
     return detections
 
 
 # ============================================================================
-#                       THE ROS NODE (already implemented)
+#                       THE ROS NODE  (provided)
 # ============================================================================
 class UKFNode(Node):
     def __init__(self):
         super().__init__('ukf_node')
         self.ukf = UKFLocalization()
         self.last_odom_time = None
+
         sensor_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
             depth=10,
         )
-        # By default subscribe to /odom. For the noisy-odom experiment in
-        # section 2.6 of the manual, change '/odom' to '/noisy_odom' below.
+
         self.create_subscription(Odometry, '/odom',
                                  self.odom_callback, 10)
         self.create_subscription(LaserScan, '/scan',
@@ -379,8 +312,10 @@ class UKFNode(Node):
         self.last_odom_time = t
         if dt <= 0.0 or dt > 1.0:
             return
+
         v = msg.twist.twist.linear.x
         omega = msg.twist.twist.angular.z
+
         self.ukf.predict(v, omega, dt)
         self.publish_pose(msg.header.stamp)
 
@@ -388,6 +323,7 @@ class UKFNode(Node):
         detections = cluster_scan(msg)
         if not detections:
             return
+
         for (r, b) in detections:
             z = np.array([r, b])
             best_idx, best_md2 = -1, float('inf')
@@ -399,6 +335,7 @@ class UKFNode(Node):
             if best_md2 > MAHALANOBIS_GATE:
                 continue
             self.ukf.update(z, LANDMARKS[best_idx])
+
         self.publish_pose(msg.header.stamp)
 
     def publish_pose(self, stamp):
