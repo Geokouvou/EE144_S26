@@ -1,3 +1,4 @@
+
 """
 recorder.py — records robot trajectories for EE144 Lab 3 (UKF).
 
@@ -46,7 +47,7 @@ class Recorder(Node):
         # TODO (The noisy odom experiment): uncomment to also store
         # noisy_odom samples.
         # ====================================================================
-        # self.noisy_odom_data = []
+        self.noisy_odom_data = []
 
         # ====================================================================
         # TODO (BONUS -- +5 points): uncomment to also store EKF samples.
@@ -80,9 +81,9 @@ class Recorder(Node):
         # ====================================================================
         # TODO: uncomment to also subscribe to /noisy_odom.
         # ====================================================================
-        # self.create_subscription(
-        #     Odometry, '/noisy_odom',
-        #     self.noisy_odom_callback, 10)
+        self.create_subscription(
+             Odometry, '/noisy_odom',
+             self.noisy_odom_callback, 10)
 
         # ====================================================================
         # TODO (BONUS): uncomment to also subscribe to /ekf_pose.
@@ -115,11 +116,11 @@ class Recorder(Node):
     # ========================================================================
     # TODO: uncomment the noisy_odom callback below.
     # ========================================================================
-    # def noisy_odom_callback(self, msg):
-    #     t = time.time() - self.t0
-    #     x = msg.pose.pose.position.x
-    #     y = msg.pose.pose.position.y
-    #     self.noisy_odom_data.append((t, x, y))
+    def noisy_odom_callback(self, msg):
+        t = time.time() - self.t0
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+        self.noisy_odom_data.append((t, x, y))
 
     # ========================================================================
     # TODO (BONUS): uncomment the ekf callback below.
@@ -149,8 +150,8 @@ class Recorder(Node):
             # ================================================================
             # TODO: uncomment to also save noisy_odom samples.
             # ================================================================
-            # for (t, x, y) in self.noisy_odom_data:
-            #     writer.writerow(['noisy_odom', f'{t:.3f}', f'{x:.4f}', f'{y:.4f}'])
+            for (t, x, y) in self.noisy_odom_data:
+                 writer.writerow(['noisy_odom', f'{t:.3f}', f'{x:.4f}', f'{y:.4f}'])
 
             # ================================================================
             # TODO (BONUS): uncomment to also save EKF samples.
@@ -160,13 +161,13 @@ class Recorder(Node):
 
         print(f'Saved CSV to:  {csv_path}')
         print(f'  truth: {len(self.truth_data)},'
-              f' odom: {len(self.odom_data)},'
-              f' ukf: {len(self.ukf_data)}')
+            f' odom: {len(self.odom_data)},'
+            f' ukf: {len(self.ukf_data)}')
 
         # ====================================================================
         # TODO: uncomment to also print noisy_odom count.
         # ====================================================================
-        # print(f'  noisy_odom: {len(self.noisy_odom_data)}')
+        print(f'  noisy_odom: {len(self.noisy_odom_data)}')
 
         # ====================================================================
         # TODO (BONUS): uncomment to also print EKF count.
@@ -197,11 +198,11 @@ class Recorder(Node):
         # ====================================================================
         # TODO: uncomment to also plot the noisy_odom trail.
         # ====================================================================
-        # if self.noisy_odom_data:
-        #     xs = [d[1] for d in self.noisy_odom_data]
-        #     ys = [d[2] for d in self.noisy_odom_data]
-        #     ax.plot(xs, ys, color='orange', linestyle=':', linewidth=1.0,
-        #             label=f'Noisy odom ({len(self.noisy_odom_data)} pts)')
+        if self.noisy_odom_data:
+            xs = [d[1] for d in self.noisy_odom_data]
+            ys = [d[2] for d in self.noisy_odom_data]
+            ax.plot(xs, ys, color='orange', linestyle=':', linewidth=1.0,
+                    label=f'Noisy odom ({len(self.noisy_odom_data)} pts)')
 
         # ====================================================================
         # TODO (BONUS): uncomment to also plot the EKF trail.
