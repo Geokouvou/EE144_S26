@@ -3,13 +3,10 @@ ukf.py — UKF localization node for the Turtlebot4 in the beacons world.
 
 *** STUDENT VERSION ***
 
-Fill in the five TODOs inside the `UKFLocalization` class. Everything else
-(ROS node, LIDAR clustering, motion/measurement models, helpers, landmark
-map) is provided.
+In this lab you fill in 10 TODOs, all inside `UKFLocalization.predict()`
+and `UKFLocalization.update()`. Each TODO corresponds to a specific
+equation from Part 1 of the lab manual.
 
-State:        mu = [x, y, theta],  Sigma is 3x3
-Control:      u  = [v, omega]
-Measurement:  z  = [range, bearing]
 
 Subscribes:
     /odom   (nav_msgs/Odometry) -- wheel odometry, drives PREDICT
@@ -118,15 +115,12 @@ def measurement_model(state, landmark_xy):
 
 
 # ============================================================================
-#                       THE UKF CLASS  (you fill this in)
+#                       THE UKF CLASS
 # ============================================================================
 #
-# A note on angles before you start:
-#   The state contains a yaw (theta) and the measurement contains a bearing.
-#   Any time you take a *difference* of two angles -- e.g. (sigma_i - mu) or
-#   (z - z_hat) -- wrap the angular component to [-pi, pi] BEFORE using it
-#   in any other math. Otherwise a 0.01 rad error can show up as ~6.27 rad.
-#   The `wrap_to_pi` helper is provided.
+# Reminder on angles: any time you take a *difference* of two angles --
+# (sigma_i - mu) or (z - z_hat) -- wrap the angular component to [-pi, pi]
+# BEFORE using it in further math. Use the `wrap_to_pi` helper.
 # ============================================================================
 class UKFLocalization:
     def __init__(self):
@@ -142,90 +136,152 @@ class UKFLocalization:
         # Measurement noise R for z = [range, bearing]
         self.R = np.diag([SIGMA_RANGE ** 2, SIGMA_BEARING ** 2])
 
-        # Sigma-point weights (you compute these)
+        # Sigma-point weights
         self.weights_m, self.weights_c = self._compute_weights()
 
-    # ------------------------------------------------------------------ #
-    # TODO 1: Sigma-point weights.
-    #
-    # Return (Wm, Wc), each a 1D array of length (2n + 1) where n = N_STATE.
-    # Wm reconstructs the mean, Wc reconstructs the covariance.
-    #
-    #     Wm[0] = LAMBDA / (n + LAMBDA)
-    #     Wc[0] = LAMBDA / (n + LAMBDA) + (1 - ALPHA^2 + BETA)
-    #     Wm[i] = Wc[i] = 1 / (2 (n + LAMBDA))    for i = 1, ..., 2n
-    # ------------------------------------------------------------------ #
+    # ---- provided: sigma-point weights ------------------------------- #
     def _compute_weights(self):
-        raise NotImplementedError("TODO 1")
+        n = N_STATE
+        Wm = np.zeros(2 * n + 1)
+        Wc = np.zeros(2 * n + 1)
+        Wm[0] = LAMBDA / (n + LAMBDA)
+        Wc[0] = LAMBDA / (n + LAMBDA) + (1 - ALPHA**2 + BETA)
+        for i in range(1, 2 * n + 1):
+            Wm[i] = 1.0 / (2 * (n + LAMBDA))
+            Wc[i] = 1.0 / (2 * (n + LAMBDA))
+        return Wm, Wc
 
-    # ------------------------------------------------------------------ #
-    # TODO 2: Sigma points.
-    #
-    # Return the 2n+1 sigma points around (mu, Sigma) as an array of shape
-    # (2n+1, n), where n = N_STATE.
-    #
-    #     X[0]     = mu
-    #     X[i+1]   = mu + L[:, i]      i = 0, ..., n-1
-    #     X[n+i+1] = mu - L[:, i]      i = 0, ..., n-1
-    #
-    # where L is the lower-triangular Cholesky factor of (n + LAMBDA) * Sigma.
-    #
-    # Gotchas:
-    #   * If Sigma drifts to not-quite-PD, Cholesky will raise
-    #     np.linalg.LinAlgError. The standard fix is to retry on
-    #     (Sigma + 1e-9 * I).
-    #   * Wrap each sigma point's yaw (index 2) to [-pi, pi] before returning.
-    # ------------------------------------------------------------------ #
+    # ---- provided: sigma-point generation ---------------------------- #
     def _generate_sigma_points(self, mu, Sigma):
-        raise NotImplementedError("TODO 2")
+        n = N_STATE
+        sigma_points = np.zeros((2 * n + 1, n))
+        try:
+            L = np.linalg.cholesky((n + LAMBDA) * Sigma)
+        except np.linalg.LinAlgError:
+            L = np.linalg.cholesky((n + LAMBDA) * (Sigma + 1e-9 * np.eye(n)))
+        sigma_points[0] = mu
+        for i in range(n):
+            sigma_points[i + 1]     = mu + L[:, i]
+            sigma_points[n + i + 1] = mu - L[:, i]
+        for i in range(2 * n + 1):
+            sigma_points[i, 2] = wrap_to_pi(sigma_points[i, 2])
+        return sigma_points
 
-    # ------------------------------------------------------------------ #
-    # TODO 3: UKF predict step.
-    #
-    # Given control (v, omega) and timestep dt, update self.mu and self.Sigma
-    # by pushing sigma points through motion_model() and recombining:
-    #
-    #     mu_pred    = sum_i  Wm[i] * g(X_i, u, dt)
-    #     Sigma_pred = sum_i  Wc[i] * (g(X_i) - mu_pred)(g(X_i) - mu_pred)^T  +  Q
-    #
-    # Don't forget to wrap angles on every difference, and on the yaw of
-    # mu_pred itself.
-    # ------------------------------------------------------------------ #
+    # =================================================================== #
+    #                           PREDICT STEP
+    # =================================================================== #
     def predict(self, v, omega, dt):
-        raise NotImplementedError("TODO 3")
+        n = N_STATE
+        sigma_points = self._generate_sigma_points(self.mu, self.Sigma)
 
-    # ------------------------------------------------------------------ #
-    # TODO 4: UKF update step.
-    #
-    # Given measurement z = [range, bearing] of the landmark at landmark_xy,
-    # fuse it into self.mu and self.Sigma:
-    #
-    #     Z_i   = h(X_i, landmark_xy)
-    #     z_hat = sum_i  Wm[i] * Z_i
-    #     S     = sum_i  Wc[i] * (Z_i - z_hat)(Z_i - z_hat)^T  +  R
-    #     T     = sum_i  Wc[i] * (X_i - mu)(Z_i - z_hat)^T
-    #     K     = T S^{-1}
-    #     mu     <- mu + K (z - z_hat)
-    #     Sigma  <- Sigma - K S K^T
-    #
-    # Wrap bearings on every measurement difference, and wrap yaw on every
-    # state difference and on the final mu.
-    # ------------------------------------------------------------------ #
+        # ----------------------------------------------------------------
+        # TODO 1 -- Eq. 2: push each sigma point through motion_model().
+        # Build an array `propagated` of shape (2n+1, n).
+        # ----------------------------------------------------------------
+        propagated = np.zeros_like(sigma_points)
+        # ... your code here ...
+
+        # ----------------------------------------------------------------
+        # TODO 2 -- Eq. 3a: predicted mean
+        #     mu_pred = sum_i  Wm[i] * propagated[i]
+        # Remember to wrap_to_pi(mu_pred[2]) after the sum.
+        # ----------------------------------------------------------------
+        mu_pred = np.zeros(n)
+        # ... your code here ...
+
+        # ----------------------------------------------------------------
+        # TODO 3 -- Eq. 3b: predicted covariance
+        #     Sigma_pred = sum_i  Wc[i] * (diff_i)(diff_i)^T  +  Q
+        # where diff_i = propagated[i] - mu_pred, with diff_i[2] wrapped
+        # to [-pi, pi] before the outer product.
+        # ----------------------------------------------------------------
+        Sigma_pred = np.zeros((n, n))
+        # ... your code here ...
+
+        self.mu = mu_pred
+        self.Sigma = Sigma_pred
+
+    # =================================================================== #
+    #                            UPDATE STEP
+    # =================================================================== #
     def update(self, z, landmark_xy):
-        raise NotImplementedError("TODO 4")
+        n = N_STATE
+        sigma_points = self._generate_sigma_points(self.mu, self.Sigma)
 
-    # ------------------------------------------------------------------ #
-    # TODO 5: Squared Mahalanobis distance for data association.
-    #
-    # Return  (z - z_hat)^T S^{-1} (z - z_hat)  as a float, where z_hat and S
-    # are computed exactly as in `update` above. Do NOT modify self.mu or
-    # self.Sigma here -- this is a "what-if" query used to decide which
-    # landmark a detection belongs to.
-    #
-    # If S is singular (np.linalg.LinAlgError on inv), return float('inf').
-    # ------------------------------------------------------------------ #
+        # ----------------------------------------------------------------
+        # TODO 4 -- Eq. 4: push each sigma point through measurement_model().
+        # Build Z_sigma of shape (2n+1, 2).  Each row is [range, bearing].
+        # ----------------------------------------------------------------
+        Z_sigma = np.zeros((2 * n + 1, 2))
+        # ... your code here ...
+
+        # ----------------------------------------------------------------
+        # TODO 5 -- Eq. 5a: predicted measurement mean
+        #     z_hat = sum_i  Wm[i] * Z_sigma[i]
+        # Remember to wrap_to_pi(z_hat[1]) after the sum (it's a bearing).
+        # ----------------------------------------------------------------
+        z_hat = np.zeros(2)
+        # ... your code here ...
+
+        # ----------------------------------------------------------------
+        # TODO 6 -- Eq. 5b: innovation covariance
+        #     S = sum_i  Wc[i] * (dz_i)(dz_i)^T  +  R
+        # where dz_i = Z_sigma[i] - z_hat, with dz_i[1] wrapped to [-pi, pi].
+        # ----------------------------------------------------------------
+        S = np.zeros((2, 2))
+        # ... your code here ...
+
+        # ----------------------------------------------------------------
+        # TODO 7 -- Eq. 5c: cross-covariance
+        #     T = sum_i  Wc[i] * (dx_i)(dz_i)^T
+        # where dx_i = sigma_points[i] - self.mu (wrap dx_i[2]: yaw)
+        # and   dz_i = Z_sigma[i] - z_hat        (wrap dz_i[1]: bearing).
+        # ----------------------------------------------------------------
+        T = np.zeros((n, 2))
+        # ... your code here ...
+
+        # ----------------------------------------------------------------
+        # TODO 8 -- Eq. 5d: Kalman gain
+        #     K = T S^{-1}
+        # ----------------------------------------------------------------
+        # ... your code here ...
+
+        # ----------------------------------------------------------------
+        # TODO 9 -- Eq. 5e: update the mean
+        #     mu <- mu + K (z - z_hat)
+        # Wrap the bearing of the innovation, and wrap self.mu[2] after.
+        # ----------------------------------------------------------------
+        # ... your code here ...
+
+        # ----------------------------------------------------------------
+        # TODO 10 -- Eq. 5f: update the covariance
+        #     Sigma <- Sigma - K S K^T
+        # ----------------------------------------------------------------
+        # ... your code here ...
+
+    # ---- provided: Mahalanobis gating (mirrors update through Eq. 5b) -- #
     def mahalanobis_distance_sq(self, z, landmark_xy):
-        raise NotImplementedError("TODO 5")
+        n = N_STATE
+        sigma_points = self._generate_sigma_points(self.mu, self.Sigma)
+        Z_sigma = np.zeros((2 * n + 1, 2))
+        for i in range(2 * n + 1):
+            Z_sigma[i] = measurement_model(sigma_points[i], landmark_xy)
+        z_hat = np.zeros(2)
+        for i in range(2 * n + 1):
+            z_hat += self.weights_m[i] * Z_sigma[i]
+        z_hat[1] = wrap_to_pi(z_hat[1])
+        S = np.zeros((2, 2))
+        for i in range(2 * n + 1):
+            dz = Z_sigma[i] - z_hat
+            dz[1] = wrap_to_pi(dz[1])
+            S += self.weights_c[i] * np.outer(dz, dz)
+        S += self.R
+        innov = z - z_hat
+        innov[1] = wrap_to_pi(innov[1])
+        try:
+            return float(innov @ np.linalg.inv(S) @ innov)
+        except np.linalg.LinAlgError:
+            return float('inf')
 
 
 # ============================================================================
